@@ -2,3 +2,4 @@
 - ВЫУЧИТЬ JS
 - ВЫУЧИТЬ REACT
 - ВЫУЧИТЬ TYPESCRIPT
+- ОСВОИТЬ DOCKER
