@@ -195,7 +195,7 @@ scp scripts/audit.sh devops:~/ && ssh devops 'sudo bash ~/audit.sh'
 
 ## 8. Веб-сервер
 
-Практическая работа № 6. Устанавливаемый пакет — `nginx` (Ubuntu 24.04, `apt install -y nginx`).
+Практическая работа № 6. Устанавливаемый пакет — `nginx` (версия `1.24.0-2ubuntu7.18` из репозитория Ubuntu 24.04, `apt install -y nginx`).
 Главный процесс работает от `root`, рабочие — от `www-data`.
 
 | Параметр | Значение |
@@ -205,6 +205,7 @@ scp scripts/audit.sh devops:~/ && ssh devops 'sudo bash ~/audit.sh'
 | Каталог ресурса | `/var/www/devops-site`, владелец `devops:devops`, каталоги `755`, файлы `644` |
 | Сертификат | `/etc/ssl/certs/devops.crt`, права `644`, владелец `root` |
 | Закрытый ключ | `/etc/ssl/private/devops.key`, права `600`, владелец `root` |
+| Срок действия сертификата | 365 суток: с 07.10.2026 по 07.10.2027 (UTC); `audit.sh` предупреждает, если до окончания остаётся менее 30 суток |
 | Журналы | `/var/log/nginx/devops-site.access.log`, `/var/log/nginx/devops-site.error.log` |
 | Протоколы TLS | `TLSv1.2 TLSv1.3`; заголовок HSTS не используется |
 
