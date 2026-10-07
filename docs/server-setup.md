@@ -192,3 +192,52 @@ sudo ufw logging medium
 ```bash
 scp scripts/audit.sh devops:~/ && ssh devops 'sudo bash ~/audit.sh'
 ```
+
+## 8. Веб-сервер
+
+Практическая работа № 6. Устанавливаемый пакет — `nginx` (версия `1.24.0-2ubuntu7.18` из репозитория Ubuntu 24.04, `apt install -y nginx`).
+Главный процесс работает от `root`, рабочие — от `www-data`.
+
+| Параметр | Значение |
+|---|---|
+| Конфигурация ресурса | `/etc/nginx/sites-available/devops-site`, активирована ссылкой в `/etc/nginx/sites-enabled/` |
+| Стандартный ресурс | отключён (удалена ссылка `sites-enabled/default`, файл в `sites-available` сохранён) |
+| Каталог ресурса | `/var/www/devops-site`, владелец `devops:devops`, каталоги `755`, файлы `644` |
+| Сертификат | `/etc/ssl/certs/devops.crt`, права `644`, владелец `root` |
+| Закрытый ключ | `/etc/ssl/private/devops.key`, права `600`, владелец `root` |
+| Срок действия сертификата | 365 суток: с 07.10.2026 по 07.10.2027 (UTC); `audit.sh` предупреждает, если до окончания остаётся менее 30 суток |
+| Журналы | `/var/log/nginx/devops-site.access.log`, `/var/log/nginx/devops-site.error.log` |
+| Протоколы TLS | `TLSv1.2 TLSv1.3`; заголовок HSTS не используется |
+
+Порты 80 и 443 разрешены правилами из раздела 6; профили `ufw app` не применяются.
+
+Формирование самоподписанного сертификата (срок действия — 365 суток, SAN `devops.local`):
+
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/devops.key \
+  -out /etc/ssl/certs/devops.crt \
+  -subj "/CN=devops.local" \
+  -addext "subjectAltName=DNS:devops.local"
+```
+
+Каталог ресурса и конфигурация:
+
+```bash
+sudo mkdir -p /var/www/devops-site
+sudo chown -R devops:devops /var/www/devops-site
+sudo ln -s /etc/nginx/sites-available/devops-site /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Конфигурация `/etc/nginx/sites-available/devops-site`: блок `listen 80` с
+`return 301 https://$host$request_uri;` и блок `listen 443 ssl` (IPv4 и IPv6) с
+`server_name devops.local`, `root /var/www/devops-site`, `index index.html`,
+`try_files $uri $uri/ =404`, `error_page 404 /404.html`, параметрами `ssl_certificate`,
+`ssl_certificate_key`, `ssl_protocols` и отдельными журналами.
+
+Содержимое доставляется из репозитория: `scripts/deploy.sh` (rsync с
+`--delete --chmod=D755,F644`). На хосте сертификат для проверки клиентом сохранён в
+`~/devops.crt` (`scp devops:/etc/ssl/certs/devops.crt ~/devops.crt`). Проверка конфигурации — раздел
+`[4] Веб-сервер` в `scripts/audit.sh`.
