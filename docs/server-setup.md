@@ -241,3 +241,114 @@ sudo nginx -t && sudo systemctl reload nginx
 `--delete --chmod=D755,F644`). На хосте сертификат для проверки клиентом сохранён в
 `~/devops.crt` (`scp devops:/etc/ssl/certs/devops.crt ~/devops.crt`). Проверка конфигурации — раздел
 `[4] Веб-сервер` в `scripts/audit.sh`.
+
+## 9. Контейнеризация
+
+Практическая работа № 7. Приложение (Flask + gunicorn) и СУБД (PostgreSQL) работают как два
+контейнера проекта Docker Compose; наружу приложение публикуется только через Nginx из
+раздела 8. Исходный код — каталог `app/` репозитория.
+
+| Параметр | Значение |
+|---|---|
+| Docker Engine | из официального репозитория Docker (`/etc/apt/sources.list.d/docker.sources`, ключ `/etc/apt/keyrings/docker.asc`); пакет `docker.io` из репозитория Ubuntu не используется |
+| Версии пакетов | `docker-ce`, `docker-ce-cli` — `5:29.9.0-1~ubuntu.24.04~noble`; `containerd.io` — `2.4.1-2`; `docker-buildx-plugin` — `0.38.0-1`; `docker-compose-plugin` — `5.6.0-1` (команда `docker compose`) |
+| Служба | `docker.service`, автозапуск включён, параметры демона не менялись |
+| Участники группы `docker` | `devops` (имеет право `sudo`; членство в группе фактически равносильно правам `root`) |
+| Проект на сервере | `/home/devops/app` (`~/app`): владелец `devops:devops`, каталоги `755`, файлы `644`; имя проекта Compose — `app` (по имени каталога) |
+| Файл `.env` | `~/app/.env`, владелец `devops:devops`, права `600`; создаётся только на сервере из `.env.example`, в репозиторий не попадает (`.gitignore`, `.dockerignore`) |
+| Образ приложения | `devops-app:1.0` из `~/app/Dockerfile`: основа `python:3.12-slim`, процесс gunicorn работает от системного пользователя `app` (не `root`), файлы приложения принадлежат `root` с правами `644` |
+| Контейнеры | `app-app-1` (приложение), `app-db-1` (образ `postgres:16-alpine`, проверка готовности `pg_isready`) |
+| Публикуемые порты | `127.0.0.1:5000` → `5000/tcp` контейнера `app-app-1`; порт СУБД `5432` не публикуется |
+| Сеть | `app_backend` (драйвер `bridge`, создаётся Compose); приложение находит СУБД по имени `db` (`DB_HOST=db`) |
+| Именованный том | `app_db_data` → `/var/lib/postgresql/data` в `app-db-1`; сохраняется при `docker compose down`, удаляется при `docker compose down -v` |
+| Перезапуск | `restart: unless-stopped` у обоих сервисов; `app` запускается после состояния `healthy` у `db` (`depends_on` с `condition: service_healthy`) |
+| Обратный прокси-сервер | `location /app/` в HTTPS-блоке `/etc/nginx/sites-available/devops-site`, `proxy_pass http://127.0.0.1:5000/` |
+| Снимок состояния | `05-docker-compose`, создан 14.10.2026 в 12:25 (МСК) на выключенной ВМ |
+
+Установка Docker Engine (под `devops`; ВМ выходит в Интернет через адаптер NAT):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker devops       # вступает в силу в новой SSH-сессии
+docker run --rm hello-world          # проверка без sudo
+```
+
+Пакеты дистрибутива (`docker.io`, `docker-compose`, `podman-docker`, `containerd`, `runc`) на чистой
+установке отсутствуют; при их наличии перед установкой удаляются командой `sudo apt remove`.
+
+Docker и межсетевой экран. При запуске Docker добавляет собственные цепочки `iptables`
+(`DOCKER`, `DOCKER-USER` и др.), правила UFW из раздела 6 не изменяются. Порт, опубликованный
+Docker (`-p`, `ports:`), обрабатывается этими цепочками до правил UFW и потому доступен из сети
+независимо от политики `deny incoming`. Поэтому в UFW нет правил для портов 5000 и 5432, порт
+приложения публикуется только на `127.0.0.1`, порт СУБД не публикуется, а внешний доступ идёт
+через Nginx (443/tcp, раздел 6).
+
+Доставка проекта с хоста (из корня репозитория; на хосте `app/` лежит без `.env`). Параметр
+`--chmod` обязателен: из WSL файлы на диске `/mnt/c` выглядят как `777`, и такие права попали бы
+в образ инструкцией `COPY`; параметр `--exclude=.env` защищает файл окружения от `--delete`:
+
+```bash
+rsync -avz --delete --exclude=.env --chmod=D755,F644 app/ devops:app/
+```
+
+Файл окружения создаётся на сервере; содержимое `.env.example` — переменные `POSTGRES_DB=app`,
+`POSTGRES_USER=app`, `POSTGRES_PASSWORD=change_me`, `DB_HOST=db`. Пароль заменяется случайным
+(32 символа), права ограничиваются владельцем:
+
+```bash
+cd ~/app
+cp .env.example .env
+chmod 600 .env
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
+```
+
+Сборка образа и запуск проекта (`db` должен перейти в состояние `healthy`):
+
+```bash
+cd ~/app
+docker compose up -d --build
+docker compose ps
+curl -s http://127.0.0.1:5000/health        # ok
+```
+
+Обратный прокси-сервер. В HTTPS-блок `/etc/nginx/sites-available/devops-site` после
+`location /` добавлено расположение для приложения; статический ресурс сохранён. Завершающий
+символ `/` в `proxy_pass` заменяет префикс `/app/` на `/` (запрос `/app/health` приходит
+приложению как `/health`):
+
+```nginx
+    location /app/ {
+        proxy_pass http://127.0.0.1:5000/;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl --cacert ~/devops.crt https://devops.local/app/          # ответ приложения
+curl --cacert ~/devops.crt -I https://devops.local/           # статический ресурс, 200 OK
+```
+
+Если приложение остановлено, Nginx возвращает клиенту `502 Bad Gateway` и записывает в
+`/var/log/nginx/devops-site.error.log` сообщение `connect() failed (111: Connection refused)
+while connecting to upstream`. Проверка конфигурации — раздел `[5] Контейнеризация` в
+`scripts/audit.sh` (служба `docker`, состояние `healthy` контейнера `app-db-1`, порты 5000 и 5432
+только на `127.0.0.1`, права `~/app/.env` равны `600`); запуск — `sudo bash ~/audit.sh`.
