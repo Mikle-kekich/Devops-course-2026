@@ -28,5 +28,12 @@ check "Конфигурация nginx корректна (nginx -t)" "0" "$(sudo
 check "Сертификат действителен ещё ${CERT_DAYS} сут." "0" "$(openssl x509 -in /etc/ssl/certs/devops.crt -noout -checkend $((CERT_DAYS * 86400)) >/dev/null 2>&1; echo $?)"
 check "В каталоге ресурса нет файлов с записью для всех" "0" "$(find /var/www/devops-site -perm -o+w 2>/dev/null | wc -l)"
 check "Права закрытого ключа TLS 600" "600" "$(sudo stat -c '%a' /etc/ssl/private/devops.key 2>/dev/null)"
+echo "[5] Контейнеризация"
+APP_DIR="${APP_DIR:-$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)/app}"   # каталог проекта
+DB_CONTAINER="${DB_CONTAINER:-app-db-1}"                                            # контейнер СУБД
+check "Служба docker активна" "active" "$(systemctl is-active docker)"
+check "Контейнер СУБД в состоянии healthy" "healthy" "$(docker inspect -f '{{.State.Health.Status}}' "${DB_CONTAINER}" 2>/dev/null)"
+check "Порты 5000 и 5432 слушаются только на 127.0.0.1" "0" "$(ss -tln | awk '$4 ~ /:(5000|5432)$/ && $4 !~ /^127\.0\.0\.1:/' | wc -l)"
+check "Права файла .env равны 600" "600" "$(stat -c '%a' "${APP_DIR}/.env" 2>/dev/null)"
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
