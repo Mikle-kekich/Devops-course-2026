@@ -1,0 +1,6 @@
+---
+app_image: "ghcr.io/mikle-kekich/devops-ci-app"
+app_tag: "b6a3319243e69d2f5657b6edb1e2431896f8d6a6"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
