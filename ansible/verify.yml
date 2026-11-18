@@ -1,0 +1,40 @@
+---
+- name: Verify deployed configuration
+  hosts: vm
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Read effective SSH configuration
+      ansible.builtin.command: sshd -T
+      register: sshd_effective
+      changed_when: false
+
+    - name: Verify SSH authentication policy
+      ansible.builtin.assert:
+        that:
+          - "'passwordauthentication no' in sshd_effective.stdout_lines"
+          - "'permitrootlogin no' in sshd_effective.stdout_lines"
+
+    - name: Read application container state
+      community.docker.docker_container_info:
+        name: "{{ app_container_name }}"
+      register: container_info
+
+    - name: Verify application container is running
+      ansible.builtin.assert:
+        that:
+          - container_info.exists
+          - container_info.container.State.Running
+        fail_msg: "Container {{ app_container_name }} is missing or stopped"
+
+    - name: Request application health on loopback
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_host_port }}/health"
+        return_content: true
+      register: direct_health
+
+    - name: Verify application health response
+      ansible.builtin.assert:
+        that:
+          - direct_health.status == 200
+          - direct_health.json.status == 'ok'
