@@ -352,3 +352,26 @@ curl --cacert ~/devops.crt -I https://devops.local/           # статичес
 while connecting to upstream`. Проверка конфигурации — раздел `[5] Контейнеризация` в
 `scripts/audit.sh` (служба `docker`, состояние `healthy` контейнера `app-db-1`, порты 5000 и 5432
 только на `127.0.0.1`, права `~/app/.env` равны `600`); запуск — `sudo bash ~/audit.sh`.
+
+## 10. Ansible
+
+Управляющий узел — Ubuntu в WSL. Запускайте команды из каталога `ansible/` в рабочей копии репозитория в домашнем каталоге Linux. В этом каталоге Ansible читает `ansible.cfg` и по умолчанию выбирает `inventory/prod.ini`. Управляемый узел — Ubuntu Server 24.04 на `devops-vm`, адрес Host-only `192.168.56.101`, SSH на порту 22.
+
+Перед первым запуском установите коллекции и сверьте отпечаток SSH-ключа хоста с выводом консоли VM. Открытый ключ для пользователя `devops` должен находиться в `~/.ssh/devops_vm.pub` на управляющем узле. Для первичной настройки используется `student` из `inventory/bootstrap.ini` с паролями SSH и sudo.
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+ansible-playbook -i inventory/bootstrap.ini site.yml --ask-pass --ask-become-pass
+```
+
+Роль `base` проверяет платформу и устанавливает Docker Engine из официального репозитория. Роль `ssh` создаёт пользователя `devops`, устанавливает открытый ключ, настраивает sudo, отключает вход по паролю и разрешает в UFW входящие TCP-соединения на порты 22 и 80. Роль `nginx` настраивает обратный прокси. Роль `app` получает образ, запускает контейнер и проверяет `/health`.
+
+Версия задаётся в `group_vars/all.yml`. Проверенный образ — `ghcr.io/mikle-kekich/devops-ci-app:b6a3319243e69d2f5657b6edb1e2431896f8d6a6`. Контейнер слушает порт 5000, опубликованный на VM как `127.0.0.1:5000`. С управляющего узла приложение доступно через Nginx по адресу `http://192.168.56.101/health`.
+
+Последующие запуски используют `devops` из `inventory/prod.ini`, ключ `~/.ssh/devops_vm` и неинтерактивный sudo. Первая команда ниже приводит узел к заданной конфигурации. Вторая только проверяет действующие параметры SSH, состояние контейнера и ответ приложения. Последняя проверяет доступ через Nginx.
+
+```bash
+ansible-playbook site.yml
+ansible-playbook verify.yml
+curl --fail http://192.168.56.101/health
+```
